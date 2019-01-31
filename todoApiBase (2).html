@@ -1,0 +1,237 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>TodoClient</title>
+	<style>
+		.login {color: red}
+	</style>
+</head>
+<body>
+	<div class="errors" style="color; red;"></div>
+	<div class="messages"></div>
+	
+	<div id="login-form">
+		<input type="text" name="username" placeholder="Username" value="test1324@tptlive.ee">
+		<input type="password" name="password" placeholder="Password" value="qwe123">
+		<button id="login">Login</button>
+		<button id="register">Register</button>
+	</div>
+	
+	<div id="app" style="display: none;">
+		Sisselogitud
+		<h1>Loo uus ülesanne</h1>
+		<label>Pealkiri</label>
+		<input type="text" id="title" placeholder= "Pealkiri">
+		<br>
+		<label>Kirjeldus</label>
+		<input type="text" id="desc" placeholder= "Pealkiri">
+		<br>
+		<button id="add-task">Lisa ülesanne</button>
+		
+		<h1>Ülesanded</h1>
+		<div id="tasks">
+			
+		</div>
+	</div>
+	
+	<script>
+		let TodoAPIClient = function() {
+			let endpoint = 'http://demo2.z-bit.ee';
+			this.accessToken = null;
+			
+			this.sendCommand = (function(path, method, data) {
+				let options = {
+					method: method,
+					headers: {
+						'Content-Type': 'application/json',
+						'Accept': 'application/json',
+					}
+				};
+				options.extra = true;
+				
+				if(this.accessToken)
+					options.headers['Authorization'] = 'Bearer '+this.accessToken;
+				
+				//GET ja HEAD HTTP päringute korral body osa ei saa olla
+				if(method !== "GET" && method !== "HEAD")
+					options.body = JSON.stringify(data);
+				
+				//Teeme HTTP päringu
+				return fetch(endpoint+path, options).then(response => {
+                    return new Promise((resolve, reject) => {
+                        //kui sisu pole siis ärme otsi seda JSONit
+                        if (response.status === 204) {
+                            resolve();
+                        }
+						response.json().then(json => {
+							if(response.ok) {
+								resolve(json);
+							} else {
+								reject(json);
+							}
+						}).catch(error => reject(error));
+						
+					});
+				})
+			}).bind(this);
+			
+			this.getToken = (function(username, password) {
+				return this.sendCommand("/users/get-token", "POST", {username: username, password: password});
+			}).bind(this);
+				
+		};
+		
+		let Task = function() {
+			this.id = null,
+			this.title = "",
+			this.desc = "",
+			this.marked_as_done = false,
+			this.created_at = null,
+			
+			this.save = (function(callback) {
+				if(this.id) {
+					client.sendCommand("/tasks/"+this.id, "PUT", this).then((function(response) {
+						for(let field in response) {
+							if(response.hasOwnProperty(field))
+								this[field] = response[field];
+						}
+						if(typeof callback === "function")
+						callback.call(this, this);
+					}).bind(this)).catch(function(errors) {
+						showErrors(errors);
+					});
+				} else {
+					client.sendCommand("/tasks", "POST", this).then((function(response) {
+						for(let field in response) {
+							if(response.hasOwnProperty(field))
+								this[field] = response[field];
+						}
+						if(typeof callback === "function")
+						callback.call(this, this);
+					}).bind(this)).catch(function(errors) {
+						showErrors(errors);
+					});
+				}
+			}).bind(this);
+            this.delete = (function () {
+                console.log("Test")
+				client.sendCommand("/tasks/"+this.id, "DELETE", this)
+			}).bind(this)
+		}
+		
+		function showErrors(errors) {
+			let message = "";
+			if(Array.isArray(errors)) {
+				//Kui on mitu viga
+				for(let i=0, row; row = errors[i]; i++)
+					message += row.message+"<br>";
+			} else if(typeof errors.message !== "undefined") {
+				//Kui on üks viga
+				message = errors.message;
+			} else {
+				//Kui viga pole tavapärases formaadis näitame tervet objekti
+				message = JSON.stringify(errors);
+			}
+			document.querySelector(".errors").innerHTML = message;
+		}
+		
+		function renderTask(task){
+			let taskElement = document.createElement('div');
+						
+			let checkbox = document.createElement('input');
+            checkbox.type = "checkbox";
+            checkbox.checked = task.marked_as_done;
+			checkbox.addEventListener("click", function(event){			
+				task.marked_as_done =event.target.checked;
+				task.save();
+				
+			});
+			taskElement.appendChild(checkbox);
+					
+			
+            let tekst = document.createElement('input');
+            tekst.value = task.title;
+            taskElement.appendChild(tekst);
+
+			let kustuta = document.createElement('input');
+			kustuta.type = "button"
+			kustuta.value = "Kustuta"
+			taskElement.appendChild(kustuta);
+            kustuta.addEventListener("click", function (event) {
+                task.delete();
+                this.parentElement.parentElement.removeChild(this.parentElement);
+                
+            });
+            let salvesta = document.createElement('input');
+            salvesta.type = "button"
+            salvesta.value = "Salvesta"
+            taskElement.appendChild(salvesta);
+            salvesta.addEventListener("click", function (event) {
+                task.title = tekst.value;
+                task.save();
+
+            });
+           
+			
+			document.querySelector("#tasks").appendChild(taskElement);
+		}
+			
+		
+		
+		let client;
+		(function() {
+			//Main funktsioon mis läheb käima kui leht on ära laadinud
+			client = new TodoAPIClient();
+			
+			//Kui login nuppu vajutatakse
+			document.querySelector("#login").addEventListener('click', function(event) {
+				let username = document.querySelector("#login-form > input[name=username]").value;
+				let password = document.querySelector("#login-form > input[name=password]").value;
+				
+				let creds = {
+					username: username,
+					password: password
+				};
+				
+				client.sendCommand("/users/get-token", "POST", creds).then(function(response) {
+					client.accessToken = response.access_token;
+					document.querySelector("#login-form").style.display = "none";
+					document.querySelector("#app").style.display = "block";
+					
+					client.sendCommand("/tasks?sort=-id", "GET").then(function(tasks) {	
+					for(let index in tasks){
+						let serveriTask = tasks[index];
+						let meieTask = new Task();
+						
+						for(let param in serveriTask){
+							meieTask[param] = serveriTask[param];
+						}
+					
+						renderTask(meieTask);
+						}
+					});
+				}).catch(function(errors) {
+					showErrors(errors);
+				});
+			});
+			
+			//Kui register nuppu vajutatakse
+			document.querySelector("#register").addEventListener('click', function() {
+				let username = document.querySelector("#login-form > input[name=username]").value;
+				let password = document.querySelector("#login-form > input[name=password]").value;
+				
+				
+			});
+			
+			//Kui lisa ülesanne nuppu vajutatakse
+			document.querySelector("#add-task").addEventListener('click', function() {
+				let uusTask = new Task();				
+				uusTask.title = document.querySelector("#title").value;
+				uusTask.desc = document.querySelector("#desc").value;
+				uusTask.save(renderTask);
+			});
+		})();
+	</script>
+</body>
+</html>
